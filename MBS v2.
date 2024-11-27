@@ -466,7 +466,7 @@ public class MovieBookingSystem {
                 users.add(new User(username, password, isAdmin));
             }
         } catch (IOException e) {
-            System.err.println("Error loading users: " + e.getMessage());
+            //System.err.println("Error loading users: " + e.getMessage());
         }
     }
     private static void saveUsers() {
