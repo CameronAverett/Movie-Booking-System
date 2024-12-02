@@ -1,0 +1,98 @@
+import java.util.ArrayList;
+import java.util.List;
+
+public class Movie {
+    private String title;
+    private String genre;
+    private String description;
+    private int runtime;
+    private boolean canPurchase;
+    private String cast;
+    private String review;
+    private Double rating;
+    private String[] showtimes;
+    private String[] theaters;
+    private List<String> reviews;
+    private int ticketsSold; // New field to track tickets sold
+
+
+    public Movie(String title, String genre, String description, int runtime, boolean canPurchase,
+                 String cast, String review, Double rating, String[] showtimes, String[] theaters) {
+        this.title = title;
+        this.genre = genre;
+        this.description = description;
+        this.runtime = runtime;
+        this.canPurchase = canPurchase;
+        this.cast = cast;
+        this.review = review;
+        this.rating = rating;
+        this.showtimes = showtimes;
+        this.theaters = theaters;
+        this.reviews = new ArrayList<>();
+        this.ticketsSold = 0; // Initialize tickets sold to 0
+    }
+
+    public String getTitle() {
+        return title;
+    }
+
+    public String getGenre() {
+        return genre;
+    }
+
+    public String getDescription() {
+        return description;
+    }
+
+    public int getRuntime() {
+        return runtime;
+    }
+
+    public boolean isCanPurchase() {
+        return canPurchase;
+    }
+
+    public String getCast() {
+        return cast;
+    }
+
+    public String getReview() {
+        return review;
+    }
+
+    public Double getRating() {
+        return rating;
+    }
+
+    public String[] getShowtimes() {
+        return showtimes;
+    }
+
+    public String[] getTheaters() {
+        return theaters;
+    }
+
+    public List<String> getReviews() {
+        return reviews;
+    }
+
+    public void addReview(String review) {
+        addReview(review, true);
+    }
+
+    public void addReview(String review, boolean saveToFile) {
+        reviews.add(review);
+        if (saveToFile) {
+            MovieBookingSystem.saveReviews(); // Save reviews to the file if required
+        }
+    }
+
+
+    public int getTicketsSold() {
+        return ticketsSold;
+    }
+
+    public void sellTickets(int count) {
+        this.ticketsSold += count;
+    }
+}
