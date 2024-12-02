@@ -1,0 +1,55 @@
+import java.io.*;
+import java.util.HashMap;
+
+public class UserDatabase {
+    private static final String FILE_NAME = "users.txt";
+
+    private static HashMap<String, String> userDatabase;
+
+    // add new user
+    public void addUser(String username, String hashedPassword) throws IOException{
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(FILE_NAME, true))) {
+            writer.write(username + "," + hashedPassword);
+            writer.newLine();
+        }
+    }
+
+    public void verifyUser(String username, String hashedPassword) throws IOException{
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(FILE_NAME))) {
+            writer.write(username + "," + hashedPassword);
+            writer.newLine();
+        }
+    }
+
+    public static HashMap<String, String> readDatabase() {
+
+        HashMap<String, String> database = new HashMap<>();
+        try (BufferedReader reader = new BufferedReader(new FileReader(FILE_NAME))) {
+            String line;
+            
+            while ((line = reader.readLine()) != null) {
+                String[] parts = line.split(",", 2);
+                if (parts.length == 2) {
+                    String username = parts[0].trim();
+                    String password = parts[1].trim();
+                    database.put(username, password);
+                }
+            }
+        } catch (IOException e) {
+            System.err.println("Error reading the file: " + e.getMessage());
+        }
+
+        // Print the dictionary - delete later
+        for (HashMap.Entry<String, String> entry : database.entrySet()) {
+            System.out.println(entry.getKey() + ": " + entry.getValue());
+        }
+
+        return database;
+    }
+
+    // delete main function later
+    public static void main(String[] args) {
+        userDatabase = readDatabase();
+    }
+        
+}
