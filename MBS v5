@@ -51,7 +51,7 @@ public class MovieBookingSystem {
                 }
             }
         } catch (IOException e) {
-            System.err.println("Error loading tickets: " + e.getMessage());
+            //System.err.println("Error loading tickets: " + e.getMessage());
         }
     }
 
