@@ -1,0 +1,1680 @@
+import javax.swing.*;
+import java.awt.*;
+import java.awt.event.ActionEvent;
+import java.awt.event.KeyEvent;
+import java.io.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import javax.crypto.Cipher;
+import javax.crypto.spec.SecretKeySpec;
+import java.util.Base64;
+import java.util.UUID;
+
+public class MovieBookingSystem {
+    private static List<Movie> currentMovies = new ArrayList<>();
+    private static List<Movie> upcomingMovies = new ArrayList<>();
+
+    private static List<Ticket> tickets = new ArrayList<>();
+    private static boolean isAdmin = false;
+    private static User loggedInUser; // Tracks the currently logged-in user
+
+
+    public static void main(String[] args) {
+        populateMovies();
+        SwingUtilities.invokeLater(() -> showLoginPage());
+    }
+
+    private static void loadTickets() {
+        tickets.clear();
+        try (BufferedReader reader = new BufferedReader(new FileReader("tickets.txt"))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                String[] parts = line.split("::");
+                if (parts.length == 6) {
+                    String username = parts[0];
+                    String movieTitle = parts[1];
+                    String theater = parts[2];
+                    String showtime = parts[3];
+                    int seats = Integer.parseInt(parts[4]);
+                    String ticketID = parts[5];
+
+                    Ticket ticket = new Ticket(username, movieTitle, theater, showtime, seats);
+                    try{
+                        var ticketField = Ticket.class.getDeclaredField("ticketID");
+                        ticketField.setAccessible(true);
+                        ticketField.set(ticket,ticketID);
+                    } catch (Exception ignored) {
+                    }
+                    tickets.add(ticket);
+                }
+            }
+        } catch (IOException e) {
+            System.err.println("Error loading tickets: " + e.getMessage());
+        }
+    }
+
+    private static void saveTickets() {
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter("tickets.txt"))) {
+            for (Ticket ticket : tickets) {
+                writer.write(String.join("::",
+                        ticket.getUsername(),
+                        ticket.getMovieTitle(),
+                        ticket.getTheater(),
+                        ticket.getShowtime(),
+                        String.valueOf(ticket.getSeats()),
+                        ticket.getTicketID()));
+                writer.newLine();
+            }
+        } catch (IOException e) {
+            System.err.println("Error saving tickets: " + e.getMessage());
+        }
+    }
+
+    private static void enableEnterKeyForAllButtons(Container container) {
+        for (Component component : container.getComponents()) {
+            if (component instanceof JButton) {
+                JButton button = (JButton) component;
+                InputMap inputMap = button.getInputMap(JComponent.WHEN_FOCUSED);
+                ActionMap actionMap = button.getActionMap();
+
+                inputMap.put(KeyStroke.getKeyStroke("ENTER"), "click");
+                actionMap.put("click", new AbstractAction() {
+                    @Override
+                    public void actionPerformed(ActionEvent e) {
+                        button.doClick();
+                    }
+                });
+            }
+
+            // If the component is a container, recurse into it
+            if (component instanceof Container) {
+                enableEnterKeyForAllButtons((Container) component);
+            }
+        }
+    }
+
+
+    private static void showLoginPage() {
+        JFrame frame = new JFrame("Login");
+        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        frame.setSize(400, 300);
+
+        JPanel panel = new JPanel(new GridLayout(4, 2));
+        JLabel userLabel = new JLabel("Username:");
+        JTextField userField = new JTextField();
+        userField.getAccessibleContext().setAccessibleName("Username field");
+        userField.getAccessibleContext().setAccessibleDescription("Enter your username.");
+        JLabel passLabel = new JLabel("Password:");
+        JPasswordField passField = new JPasswordField();
+        passField.getAccessibleContext().setAccessibleName("Password field");
+        passField.getAccessibleContext().setAccessibleDescription("Enter your password.");
+
+        JButton loginButton = new JButton("Login");
+        loginButton.setMnemonic(KeyEvent.VK_L);
+        loginButton.getAccessibleContext().setAccessibleName("Login Button");
+        JButton registerButton = new JButton("Register");
+        registerButton.setMnemonic(KeyEvent.VK_R);
+        registerButton.getAccessibleContext().setAccessibleName("Register Button");
+
+        loginButton.addActionListener(e -> {
+            String username = userField.getText().trim();
+            String password = new String(passField.getPassword()).trim();
+            String hashedPassword = EncryptionUtils.hashPassword(password); // Hash the entered password
+
+            User user = users.stream()
+                    .filter(u -> u.getUsername().equals(username) && u.getPassword().equals(hashedPassword))
+                    .findFirst()
+                    .orElse(null);
+
+            if (user != null) {
+                loggedInUser = user;
+                loadTickets();
+                if (user.isAdmin()) {
+                    isAdmin = true;
+                    frame.dispose();
+                    showAdminPage();
+                } else {
+                    isAdmin = false;
+                    frame.dispose();
+                    showHomePage();
+                }
+            } else {
+                JOptionPane.showMessageDialog(frame, "Invalid username or password.", "Error", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+
+        registerButton.addActionListener(e -> {
+            frame.dispose();
+            showRegistrationPage();
+        });
+
+        userField.getAccessibleContext().setAccessibleName("Enter your username here.");
+        userField.getAccessibleContext().setAccessibleDescription("This field requires your username to log in.");
+        passField.getAccessibleContext().setAccessibleName("Password");
+        passField.getAccessibleContext().setAccessibleDescription("This field requires your password to log in.");
+        loginButton.getAccessibleContext().setAccessibleName("Login Button");
+
+
+        panel.add(userLabel);
+        panel.add(userField);
+        panel.add(passLabel);
+        panel.add(passField);
+        panel.add(new JLabel()); // Spacer
+        panel.add(loginButton);
+        panel.add(new JLabel()); // Spacer
+        panel.add(registerButton);
+
+        enableEnterKeyForAllButtons(panel);
+        frame.add(panel);
+        ThemeManager.applyTheme(frame.getContentPane());
+        frame.setVisible(true);
+    }
+
+    private static void showRegistrationPage() {
+        JFrame frame = new JFrame("Register");
+        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        frame.setSize(400, 300);
+
+        JPanel panel = new JPanel(new GridLayout(5, 2));
+        JLabel userLabel = new JLabel("Username:");
+        JTextField userField = new JTextField();
+        JLabel passLabel = new JLabel("Password:");
+        JPasswordField passField = new JPasswordField();
+
+        JLabel roleLabel = new JLabel("Role:");
+        JComboBox<String> roleBox = new JComboBox<>(new String[]{"User", "Admin"});
+
+        JButton registerButton = new JButton("Register");
+        JButton backButton = new JButton("Back");
+
+        registerButton.addActionListener(e -> {
+            String username = userField.getText().trim();
+            String password = new String(passField.getPassword()).trim();
+            boolean isAdmin = roleBox.getSelectedItem().equals("Admin");
+
+            if (username.isEmpty() || password.isEmpty()) {
+                JOptionPane.showMessageDialog(frame, "Fields cannot be empty.", "Error", JOptionPane.ERROR_MESSAGE);
+            } else if (users.stream().anyMatch(u -> u.getUsername().equals(username))) {
+                JOptionPane.showMessageDialog(frame, "Username already exists.", "Error", JOptionPane.ERROR_MESSAGE);
+            } else {
+                String hashedPassword = EncryptionUtils.hashPassword(password); // Encrypt the password
+                users.add(new User(username, hashedPassword, isAdmin));
+                saveUsers(); // Save the encrypted password
+                JOptionPane.showMessageDialog(frame, "Registration successful!");
+                frame.dispose();
+                showLoginPage();
+            }
+        });
+
+        backButton.addActionListener(e -> {
+            frame.dispose();
+            showLoginPage();
+        });
+
+        panel.add(userLabel);
+        panel.add(userField);
+        panel.add(passLabel);
+        panel.add(passField);
+        panel.add(roleLabel);
+        panel.add(roleBox);
+        panel.add(new JLabel()); // Spacer
+        panel.add(registerButton);
+        panel.add(new JLabel()); // Spacer
+        panel.add(backButton);
+
+        enableEnterKeyForAllButtons(panel);
+        frame.add(panel);
+        ThemeManager.applyTheme(frame.getContentPane());
+        frame.setVisible(true);
+    }
+
+    public static class User {
+        private String username;
+        private String password;
+        private boolean isAdmin;
+
+        public User(String username, String password, boolean isAdmin) {
+            this.username = username;
+            this.password = password;
+            this.isAdmin = isAdmin;
+        }
+
+        public String getUsername() {
+            return username;
+        }
+
+        public String getPassword() {
+            return password;
+        }
+
+        public boolean isAdmin() {
+            return isAdmin;
+        }
+    }
+    private static List<User> users = new ArrayList<>();
+
+    static {
+        loadUsers(); // Load users from file during initialization
+        if (users.stream().noneMatch(u -> u.getUsername().equals("admin"))) {
+            // Ensure default admin exists
+            users.add(new User("admin", "admin123", true));
+            saveUsers();
+        }
+    }
+
+    private static void populateMovies() {
+        loadMovies(); // Load movies from file
+        loadReviews();
+    }
+
+    private static void showHomePage() {
+        JFrame frame = new JFrame("Movie Booking System - Home");
+        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        frame.setSize(500, 400);
+
+        JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+
+        JLabel welcomeLabel = new JLabel("Welcome to the Movie Booking System!", SwingConstants.CENTER);
+        welcomeLabel.setFont(new Font("Arial", Font.BOLD, 16));
+        welcomeLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        panel.add(welcomeLabel);
+
+        int buttonWidth = 300;
+        int buttonHeight = 40;
+
+        // Button: Browse Current Movies
+        JButton currentMoviesButton = new JButton("Browse Current Movie Catalog");
+        setUniformButtonSize(currentMoviesButton, buttonWidth, buttonHeight);
+        currentMoviesButton.setAlignmentX(Component.CENTER_ALIGNMENT);
+        currentMoviesButton.addActionListener(e -> {
+            frame.dispose();
+            showCurrentMoviesPage();
+        });
+
+        panel.add(currentMoviesButton);
+
+        // Button: Browse Upcoming Movies
+        JButton upcomingMoviesButton = new JButton("Browse Upcoming Movie Catalog");
+        setUniformButtonSize(upcomingMoviesButton, buttonWidth, buttonHeight);
+        upcomingMoviesButton.setAlignmentX(Component.CENTER_ALIGNMENT);
+        upcomingMoviesButton.addActionListener(e -> {
+            frame.dispose();
+            showUpcomingMoviesPage();
+        });
+
+        panel.add(upcomingMoviesButton);
+
+        // Button: Search a Movie
+        JButton searchMoviesButton = new JButton("Search a Movie");
+        setUniformButtonSize(searchMoviesButton, buttonWidth, buttonHeight);
+        searchMoviesButton.setAlignmentX(Component.CENTER_ALIGNMENT);
+        searchMoviesButton.addActionListener(e -> {
+            frame.dispose();
+            showSearchMoviesPage();
+        });
+
+        panel.add(searchMoviesButton);
+
+        JButton ticketsButton = new JButton("View My Tickets");
+        ticketsButton.addActionListener(e -> {
+            frame.dispose();
+            showTicketsPage();
+        });
+
+        panel.add(ticketsButton);
+
+        enableEnterKeyForAllButtons(panel);
+        frame.add(panel);
+        ThemeManager.applyTheme(frame.getContentPane());
+        frame.setVisible(true);
+    }
+    private static void showTicketsPage() {
+        JFrame frame = new JFrame("My Tickets");
+        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        frame.setSize(500, 400);
+
+        JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+
+        JLabel label = new JLabel("Your Tickets");
+        label.setFont(new Font("Arial", Font.BOLD, 16));
+        label.setAlignmentX(Component.CENTER_ALIGNMENT);
+        panel.add(label);
+
+        for (Ticket ticket : tickets) {
+            if (ticket.getUsername().equals(loggedInUser.getUsername())) {
+                JTextArea ticketDetails = new JTextArea(ticket.toString());
+                ticketDetails.setEditable(false);
+                ticketDetails.setLineWrap(true);
+                ticketDetails.setWrapStyleWord(true);
+                panel.add(new JScrollPane(ticketDetails));
+            }
+        }
+
+        JButton backButton = new JButton("Back");
+        backButton.addActionListener(e -> {
+            frame.dispose();
+            showHomePage();
+        });
+        panel.add(backButton);
+
+        enableEnterKeyForAllButtons(panel);
+        frame.add(panel);
+        ThemeManager.applyTheme(frame.getContentPane());
+        frame.setVisible(true);
+    }
+
+    private static void showMovieDetails(JFrame parent, Movie movie) {
+        parent.dispose();
+        JFrame frame = new JFrame("Movie Details - " + movie.getTitle());
+        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        frame.setSize(600, 800);
+
+        JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+
+        // Movie Details
+        panel.add(new JLabel("Title: " + movie.getTitle()));
+        panel.add(new JLabel("Genre: " + movie.getGenre()));
+        panel.add(new JLabel("Runtime: " + movie.getRuntime() + " minutes"));
+        panel.add(new JLabel("Synopsis: " + movie.getDescription()));
+        panel.add(new JLabel("Cast: " + movie.getCast()));
+        panel.add(new JLabel("Review: " + (movie.getReview() != null ? movie.getReview() : "No reviews yet")));
+        panel.add(new JLabel("Rating: " + (movie.getRating() != null ? movie.getRating() + " / 5" : "N/A")));
+
+        // Reviews Section
+        panel.add(new JLabel("User Reviews:"));
+        JTextArea reviewsArea = new JTextArea(10, 40);
+        reviewsArea.setEditable(false);
+        reviewsArea.setLineWrap(true);
+        reviewsArea.setWrapStyleWord(true);
+        StringBuilder reviewsText = new StringBuilder();
+        for (String review : movie.getReviews()) {
+            reviewsText.append("- ").append(review).append("\n");
+        }
+        reviewsArea.setText(reviewsText.toString());
+        panel.add(new JScrollPane(reviewsArea));
+
+        // Add Review Section
+        panel.add(new JLabel("Write a Review:"));
+        JTextArea reviewInput = new JTextArea(5, 40);
+        reviewInput.setLineWrap(true);
+        reviewInput.setWrapStyleWord(true);
+        JButton submitReviewButton = new JButton("Submit Review");
+
+        submitReviewButton.addActionListener(e -> {
+            String newReview = reviewInput.getText().trim();
+            if (!newReview.isEmpty()) {
+                movie.addReview(newReview);
+                reviewsText.append("- ").append(newReview).append("\n");
+                reviewsArea.setText(reviewsText.toString());
+                reviewInput.setText("");
+                JOptionPane.showMessageDialog(frame, "Thank you for your review!");
+            } else {
+                JOptionPane.showMessageDialog(frame, "Review cannot be empty.", "Error", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+        panel.add(new JScrollPane(reviewInput));
+        panel.add(submitReviewButton);
+
+        // Purchase Ticket Section
+        panel.add(new JLabel("Purchase Tickets:"));
+        JLabel theaterLabel = new JLabel("Select Theater:");
+        JComboBox<String> theaterBox = new JComboBox<>(movie.getTheaters());
+
+        JLabel timeLabel = new JLabel("Select Showtime:");
+        JComboBox<String> timeBox = new JComboBox<>(movie.getShowtimes());
+
+        JLabel seatsLabel = new JLabel("Number of Seats:");
+        SpinnerNumberModel seatModel = new SpinnerNumberModel(1, 1, 10, 1);
+        JSpinner seatsSpinner = new JSpinner(seatModel);
+
+        JButton purchaseButton = new JButton("Proceed to Payment");
+
+        purchaseButton.addActionListener(e -> showPaymentPage(frame, movie, theaterBox, timeBox, seatsSpinner));
+
+        panel.add(theaterLabel);
+        panel.add(theaterBox);
+        panel.add(timeLabel);
+        panel.add(timeBox);
+        panel.add(seatsLabel);
+        panel.add(seatsSpinner);
+        panel.add(purchaseButton);
+
+        JButton backButton = new JButton("Back");
+
+        backButton.addActionListener(e -> {
+            frame.dispose();
+            showHomePage();
+        });
+        panel.add(backButton);
+        enableEnterKeyForAllButtons(panel);
+        frame.add(new JScrollPane(panel));
+        ThemeManager.applyTheme(frame.getContentPane());
+        frame.setVisible(true);
+    }
+
+    public static boolean validateCreditCard(String cardNumber) {
+        return cardNumber.matches("\\d{16}");
+    }
+    private static void showPaymentPage(JFrame parent, Movie movie, JComboBox<String> theaterBox, JComboBox<String> timeBox, JSpinner seatsSpinner) {
+        parent.dispose();
+        JFrame frame = new JFrame("Payment - " + movie.getTitle());
+        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        frame.setSize(500, 500);
+
+        JPanel panel = new JPanel(new GridLayout(8, 2));
+        JLabel paymentMethodLabel = new JLabel("Select Payment Method:");
+        JComboBox<String> paymentMethodBox = new JComboBox<>(new String[]{"Debit Card", "Credit Card", "PayPal"});
+
+        JLabel cardNumberLabel = new JLabel("Card Number:");
+        JTextField cardNumberField = new JTextField();
+
+        JLabel nameOnCardLabel = new JLabel("Name on Card:");
+        JTextField nameOnCardField = new JTextField();
+
+        JLabel expiryDateLabel = new JLabel("Expiry Date (MM/YY):");
+        JTextField expiryDateField = new JTextField();
+
+        JLabel cvvLabel = new JLabel("CVV:");
+        JPasswordField cvvField = new JPasswordField();
+
+        JButton confirmButton = new JButton("Confirm Purchase");
+
+        // Add action listener to the payment method dropdown
+        paymentMethodBox.addActionListener(e -> {
+            String selectedMethod = (String) paymentMethodBox.getSelectedItem();
+            if ("PayPal".equals(selectedMethod)) {
+                frame.dispose();
+                showPayPalLoginPage(movie, theaterBox, timeBox, seatsSpinner);
+            }
+        });
+
+        confirmButton.addActionListener(e -> {
+            String cardNumber = cardNumberField.getText().trim();
+            String nameOnCard = nameOnCardField.getText().trim();
+            String expiryDate = expiryDateField.getText().trim();
+            String cvv = new String(cvvField.getPassword()).trim();
+
+            if (!validateCreditCard(cardNumber) || cvv.length() != 3 || expiryDate.length() != 5) {
+                JOptionPane.showMessageDialog(frame, "Invalid payment details. Please check and try again.", "Error", JOptionPane.ERROR_MESSAGE);
+            } else {
+                String encryptedCardNumber = EncryptionUtils.encrypt(cardNumber);
+                JOptionPane.showMessageDialog(frame, "Payment processed securely!");
+                processBooking(frame, movie, theaterBox, timeBox, seatsSpinner, encryptedCardNumber);
+            }
+        });
+
+        panel.add(paymentMethodLabel);
+        panel.add(paymentMethodBox);
+        panel.add(cardNumberLabel);
+        panel.add(cardNumberField);
+        panel.add(nameOnCardLabel);
+        panel.add(nameOnCardField);
+        panel.add(expiryDateLabel);
+        panel.add(expiryDateField);
+        panel.add(cvvLabel);
+        panel.add(cvvField);
+        panel.add(new JLabel()); // Spacer
+        panel.add(confirmButton);
+
+        enableEnterKeyForAllButtons(panel);
+        frame.add(panel);
+        ThemeManager.applyTheme(frame.getContentPane());
+        frame.setVisible(true);
+    }
+
+    private static void showPayPalLoginPage(Movie movie, JComboBox<String> theaterBox, JComboBox<String> timeBox, JSpinner seatsSpinner) {
+        JFrame frame = new JFrame("PayPal Login");
+        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        frame.setSize(400, 300);
+
+        JPanel panel = new JPanel(new GridLayout(4, 2));
+        JLabel emailLabel = new JLabel("PayPal Email:");
+        JTextField emailField = new JTextField();
+        JLabel passwordLabel = new JLabel("PayPal Password:");
+        JPasswordField passwordField = new JPasswordField();
+
+        JButton loginButton = new JButton("Login");
+        JButton backButton = new JButton("Back");
+
+        loginButton.addActionListener(e -> {
+            String email = emailField.getText().trim();
+            String password = new String(passwordField.getPassword()).trim();
+
+            if (validatePayPalEmail(email) && !password.isEmpty()) {
+                boolean paymentSuccess = processPayPalPayment(email, password);
+                if (paymentSuccess) {
+                    processBooking(frame, movie, theaterBox, timeBox, seatsSpinner, "PayPal: " + email);
+                } else {
+                    JOptionPane.showMessageDialog(frame, "PayPal payment failed. Please try again.", "Error", JOptionPane.ERROR_MESSAGE);
+                }
+            } else {
+                JOptionPane.showMessageDialog(frame, "Invalid PayPal credentials.", "Error", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+
+        backButton.addActionListener(e -> {
+            frame.dispose();
+            JFrame previousFrame = new JFrame();
+            showPaymentPage(previousFrame, movie, theaterBox, timeBox, seatsSpinner);
+        });
+
+        panel.add(emailLabel);
+        panel.add(emailField);
+        panel.add(passwordLabel);
+        panel.add(passwordField);
+        panel.add(new JLabel()); // Spacer
+        panel.add(loginButton);
+        panel.add(new JLabel()); // Spacer
+        panel.add(backButton);
+
+        enableEnterKeyForAllButtons(panel);
+        frame.add(panel);
+        ThemeManager.applyTheme(frame.getContentPane());
+        frame.setVisible(true);
+    }
+
+    private static boolean validatePayPalEmail(String email) {
+        return email.matches("^[\\w._%+-]+@[\\w.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    private static boolean processPayPalPayment(String email, String password) {
+        // Simulate PayPal payment approval
+        int confirm = JOptionPane.showConfirmDialog(null,
+                "PayPal payment request sent to: " + email + "\nDo you confirm this payment?",
+                "PayPal Payment", JOptionPane.YES_NO_OPTION);
+
+        return confirm == JOptionPane.YES_OPTION;
+    }
+
+    private static void processBooking(JFrame parent, Movie movie, JComboBox<String> theaterBox, JComboBox<String> timeBox, JSpinner seatsSpinner, String paymentDetails) {
+        String theater = (String) theaterBox.getSelectedItem();
+        String time = (String) timeBox.getSelectedItem();
+        int seats = (int) seatsSpinner.getValue();
+
+        // Increment the ticket count
+        movie.sellTickets(seats);
+        saveMovies(); // Save updated ticket sales to the file
+
+        String username = loggedInUser.username; // Replace with the actual logged-in user's name
+        //String ticketDetails = generateTicket(username, movie, theater, time, seats);
+        Ticket ticket = new Ticket(username, movie.getTitle(), theater, time, seats);
+        tickets.add(ticket);
+        saveTickets();
+        JOptionPane.showMessageDialog(parent, "Booking confirmed!\n" +
+                "Movie: " + movie.getTitle() + "\n" +
+                "Theater: " + theater + "\n" +
+                "Showtime: " + time + "\n" +
+                "Seats: " + seats + "\n");
+
+        parent.dispose();
+        showTicket(ticket.toString());
+    }
+
+    private static void showAdminPage() {
+        loadTickets();
+        JFrame frame = new JFrame("Admin Page");
+        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        frame.setSize(600, 400);
+
+        JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+
+        JLabel header = new JLabel("System Status Report", SwingConstants.CENTER);
+        header.setFont(new Font("Arial", Font.BOLD, 18));
+        panel.add(header);
+
+        // Calculate total tickets sold
+        int totalTicketsSold = tickets.size();
+
+        JLabel ticketsSoldLabel = new JLabel("Total Tickets Sold: " + totalTicketsSold);
+        ticketsSoldLabel.setFont(new Font("Arial", Font.PLAIN, 14));
+        ticketsSoldLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        panel.add(ticketsSoldLabel);
+
+        // Currently playing movies
+        JLabel currentMoviesLabel = new JLabel("Currently Playing Movies:");
+        currentMoviesLabel.setFont(new Font("Arial", Font.BOLD, 16));
+        currentMoviesLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        panel.add(currentMoviesLabel);
+
+        for (Movie movie : currentMovies) {
+            long ticketsForMovie = tickets.stream()
+                    .filter(ticket -> ticket.getMovieTitle().equals(movie.getTitle()))
+                    .count();
+            JLabel movieDetails = new JLabel(
+                    String.format("%s (Tickets Sold: %d)", movie.getTitle(), ticketsForMovie));
+            movieDetails.setFont(new Font("Arial", Font.PLAIN, 14));
+            movieDetails.setAlignmentX(Component.CENTER_ALIGNMENT);
+            panel.add(movieDetails);
+        }
+
+        // Upcoming movies
+        JLabel upcomingMoviesLabel = new JLabel("Upcoming Movies:");
+        upcomingMoviesLabel.setFont(new Font("Arial", Font.BOLD, 16));
+        upcomingMoviesLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        panel.add(upcomingMoviesLabel);
+
+        for (Movie movie : upcomingMovies) {
+            JLabel movieDetails = new JLabel(movie.getTitle());
+            movieDetails.setFont(new Font("Arial", Font.PLAIN, 14));
+            movieDetails.setAlignmentX(Component.CENTER_ALIGNMENT);
+            panel.add(movieDetails);
+        }
+
+        JButton manageShowButton = new JButton("Manage Shows");
+
+        manageShowButton.setAlignmentX(Component.CENTER_ALIGNMENT);
+        manageShowButton.addActionListener(e -> {
+            frame.dispose();
+            showManageShowPage();
+        });
+        panel.add(manageShowButton);
+
+        JButton backButton = new JButton("Log Out");
+
+        backButton.setAlignmentX(Component.CENTER_ALIGNMENT);
+        backButton.addActionListener(e -> {
+            loggedInUser = null;
+            frame.dispose();
+            showLoginPage();
+        });
+
+        panel.add(Box.createVerticalStrut(10)); // Spacer
+        panel.add(backButton);
+
+        enableEnterKeyForAllButtons(panel);
+        frame.add(new JScrollPane(panel));
+        ThemeManager.applyTheme(frame.getContentPane());
+        frame.setVisible(true);
+    }
+
+    private static void showEditMoviePage(Movie movie, JFrame parentFrame) {
+        JFrame frame = new JFrame("Edit Movie: " + movie.getTitle());
+        frame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+        frame.setSize(600, 500);
+
+        JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+
+        JLabel header = new JLabel("Edit Movie Details", SwingConstants.CENTER);
+        header.setFont(new Font("Arial", Font.BOLD, 18));
+        panel.add(header);
+
+        // Input fields pre-filled with movie details
+        JTextField titleField = new JTextField(movie.getTitle());
+        JTextField genreField = new JTextField(movie.getGenre());
+        JTextField descriptionField = new JTextField(movie.getDescription());
+        JTextField runtimeField = new JTextField(String.valueOf(movie.getRuntime()));
+        JTextField priceField = new JTextField(String.valueOf(movie.getTicketPrice()));
+        JTextField castField = new JTextField(movie.getCast());
+        JTextField reviewField = new JTextField(movie.getReview() == null ? "" : movie.getReview());
+        JTextField ratingField = new JTextField(String.valueOf(movie.getRating()));
+        JTextField showtimesField = new JTextField(String.join(",", movie.getShowtimes()));
+        JTextField theatersField = new JTextField(String.join(",", movie.getTheaters()));
+
+        JButton saveButton = new JButton("Save Changes");
+
+        saveButton.addActionListener(e -> {
+            try {
+                // Update movie details
+                movie.setTitle(titleField.getText().trim());
+                movie.setGenre(genreField.getText().trim());
+                movie.setDescription(descriptionField.getText().trim());
+                movie.setRuntime(Integer.parseInt(runtimeField.getText().trim()));
+                movie.setTicketPrice(Double.parseDouble(priceField.getText().trim()));
+                movie.setCast(castField.getText().trim());
+                movie.setReview(reviewField.getText().trim());
+                movie.setRating(Double.parseDouble(ratingField.getText().trim()));
+                movie.setShowtimes(showtimesField.getText().trim().split(","));
+                movie.setTheaters(theatersField.getText().trim().split(","));
+
+                saveMovies();
+                JOptionPane.showMessageDialog(frame, "Movie updated successfully!");
+                frame.dispose();
+                parentFrame.dispose();
+                showManageShowPage(); // Refresh the manage show page
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(frame, "Invalid input! Please check your fields.", "Error", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+
+        // Add input fields to the panel
+        panel.add(new JLabel("Title:"));
+        panel.add(titleField);
+        panel.add(new JLabel("Genre:"));
+        panel.add(genreField);
+        panel.add(new JLabel("Description:"));
+        panel.add(descriptionField);
+        panel.add(new JLabel("Runtime (mins):"));
+        panel.add(runtimeField);
+        panel.add(new JLabel("Ticket Price:"));
+        panel.add(priceField);
+        panel.add(new JLabel("Cast (comma-separated):"));
+        panel.add(castField);
+        panel.add(new JLabel("Review:"));
+        panel.add(reviewField);
+        panel.add(new JLabel("Rating (out of 5):"));
+        panel.add(ratingField);
+        panel.add(new JLabel("Showtimes (comma-separated):"));
+        panel.add(showtimesField);
+        panel.add(new JLabel("Theaters (comma-separated):"));
+        panel.add(theatersField);
+        panel.add(saveButton);
+
+        enableEnterKeyForAllButtons(panel);
+        frame.add(new JScrollPane(panel));
+        ThemeManager.applyTheme(frame.getContentPane());
+        frame.setVisible(true);
+    }
+
+    private static void showManageShowPage() {
+        JFrame frame = new JFrame("Manage Shows");
+        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        frame.setSize(800, 600);
+
+        // TabbedPane to separate Current Movies and Upcoming Movies
+        JTabbedPane tabbedPane = new JTabbedPane();
+
+        // Tab for managing Current Movies
+        JPanel currentMoviesPanel = createCurrentMoviesPanel(frame);
+        tabbedPane.addTab("Current Movies", new JScrollPane(currentMoviesPanel));
+
+        // Tab for managing Upcoming Movies
+        JPanel upcomingMoviesPanel = createUpcomingMoviesPanel(frame);
+        tabbedPane.addTab("Upcoming Movies", new JScrollPane(upcomingMoviesPanel));
+
+        frame.add(tabbedPane);
+        ThemeManager.applyTheme(frame.getContentPane());
+        frame.setVisible(true);
+    }
+
+    private static JPanel createCurrentMoviesPanel(JFrame parentFrame) {
+        JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+
+        JLabel header = new JLabel("Manage Current Movies", SwingConstants.CENTER);
+        header.setFont(new Font("Arial", Font.BOLD, 18));
+        panel.add(header);
+
+        // Display current movies
+        for (Movie movie : currentMovies) {
+            JPanel moviePanel = new JPanel();
+            moviePanel.setLayout(new BoxLayout(moviePanel, BoxLayout.X_AXIS));
+
+            JLabel movieLabel = new JLabel(String.format("%s (Price: $%.2f)", movie.getTitle(), movie.getTicketPrice()));
+            moviePanel.add(movieLabel);
+
+            JButton viewEditButton = new JButton("View/Edit");
+            viewEditButton.addActionListener(e -> {
+                showEditMoviePage(movie, parentFrame); // Opens the edit page for the selected movie
+            });
+            moviePanel.add(viewEditButton);
+
+            JButton removeButton = new JButton("Remove");
+            removeButton.addActionListener(e -> {
+                currentMovies.remove(movie);
+                saveMovies();
+                parentFrame.dispose();
+                showManageShowPage();
+            });
+            moviePanel.add(removeButton);
+
+            panel.add(moviePanel);
+        }
+
+        // Add new current movie section
+        JLabel addMovieLabel = new JLabel("Add a New Current Movie");
+        addMovieLabel.setFont(new Font("Arial", Font.BOLD, 16));
+        panel.add(addMovieLabel);
+
+        JTextField titleField = new JTextField();
+        JTextField genreField = new JTextField();
+        JTextField descriptionField = new JTextField();
+        JTextField runtimeField = new JTextField();
+        JTextField priceField = new JTextField();
+        JTextField castField = new JTextField();
+        JTextField reviewField = new JTextField();
+        JTextField ratingField = new JTextField();
+        JTextField showtimesField = new JTextField();
+        JTextField theatersField = new JTextField();
+
+        JButton addButton = new JButton("Add Current Movie");
+        addButton.addActionListener(e -> {
+            try {
+                String title = titleField.getText().trim();
+                String genre = genreField.getText().trim();
+                String description = descriptionField.getText().trim();
+                int runtime = Integer.parseInt(runtimeField.getText().trim());
+                double price = Double.parseDouble(priceField.getText().trim());
+                String cast = castField.getText().trim();
+                String review = reviewField.getText().trim();
+                double rating = Double.parseDouble(ratingField.getText().trim());
+                String[] showtimes = showtimesField.getText().trim().split(",");
+                String[] theaters = theatersField.getText().trim().split(",");
+
+                // Add to current movies list
+                currentMovies.add(new Movie(title, genre, description, runtime, true, cast, review,
+                        rating, showtimes, theaters, price));
+                saveMovies();
+                JOptionPane.showMessageDialog(parentFrame, "Current movie added successfully!");
+                parentFrame.dispose();
+                showManageShowPage();
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(parentFrame, "Invalid input! Please check your fields.", "Error", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+
+        panel.add(new JLabel("Title:"));
+        panel.add(titleField);
+        panel.add(new JLabel("Genre:"));
+        panel.add(genreField);
+        panel.add(new JLabel("Description:"));
+        panel.add(descriptionField);
+        panel.add(new JLabel("Runtime (mins):"));
+        panel.add(runtimeField);
+        panel.add(new JLabel("Price:"));
+        panel.add(priceField);
+        panel.add(new JLabel("Cast:"));
+        panel.add(castField);
+        panel.add(new JLabel("Review:"));
+        panel.add(reviewField);
+        panel.add(new JLabel("Rating (out of 5):"));
+        panel.add(ratingField);
+        panel.add(new JLabel("Showtimes (comma-separated):"));
+        panel.add(showtimesField);
+        panel.add(new JLabel("Theaters (comma-separated):"));
+        panel.add(theatersField);
+        panel.add(addButton);
+
+        return panel;
+    }
+
+    private static JPanel createUpcomingMoviesPanel(JFrame parentFrame) {
+        JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+
+        JLabel header = new JLabel("Manage Upcoming Movies", SwingConstants.CENTER);
+        header.setFont(new Font("Arial", Font.BOLD, 18));
+        panel.add(header);
+
+        // Display upcoming movies
+        for (Movie movie : upcomingMovies) {
+            JPanel moviePanel = new JPanel();
+            moviePanel.setLayout(new BoxLayout(moviePanel, BoxLayout.X_AXIS));
+
+            JLabel movieLabel = new JLabel(String.format("%s (Coming Soon)", movie.getTitle()));
+            moviePanel.add(movieLabel);
+
+            JButton viewEditButton = new JButton("View/Edit");
+            viewEditButton.addActionListener(e -> {
+                showEditMoviePage(movie, parentFrame); // Opens the edit page for the selected movie
+            });
+            moviePanel.add(viewEditButton);
+
+            JButton removeButton = new JButton("Remove");
+            removeButton.addActionListener(e -> {
+                upcomingMovies.remove(movie);
+                saveMovies();
+                parentFrame.dispose();
+                showManageShowPage();
+            });
+            moviePanel.add(removeButton);
+
+            panel.add(moviePanel);
+        }
+
+        // Add new upcoming movie section
+        JLabel addMovieLabel = new JLabel("Add a New Upcoming Movie");
+        addMovieLabel.setFont(new Font("Arial", Font.BOLD, 16));
+        panel.add(addMovieLabel);
+
+        JTextField titleField = new JTextField();
+        JTextField genreField = new JTextField();
+        JTextField descriptionField = new JTextField();
+        JTextField runtimeField = new JTextField();
+        JTextField castField = new JTextField();
+        JTextField reviewField = new JTextField();
+        JTextField ratingField = new JTextField();
+        JTextField showtimesField = new JTextField();
+        JTextField theatersField = new JTextField();
+
+        JButton addButton = new JButton("Add Upcoming Movie");
+        addButton.addActionListener(e -> {
+            try {
+                String title = titleField.getText().trim();
+                String genre = genreField.getText().trim();
+                String description = descriptionField.getText().trim();
+                int runtime = Integer.parseInt(runtimeField.getText().trim());
+                String cast = castField.getText().trim();
+                String review = reviewField.getText().trim();
+                double rating = Double.parseDouble(ratingField.getText().trim());
+                String[] showtimes = showtimesField.getText().trim().split(",");
+                String[] theaters = theatersField.getText().trim().split(",");
+
+                // Add to upcoming movies list
+                upcomingMovies.add(new Movie(title, genre, description, runtime, false, cast, review,
+                        rating, showtimes, theaters, 0.0)); // Set `canPurchase` to false
+                saveMovies();
+                JOptionPane.showMessageDialog(parentFrame, "Upcoming movie added successfully!");
+                parentFrame.dispose();
+                showManageShowPage();
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(parentFrame, "Invalid input! Please check your fields.", "Error", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+
+        panel.add(new JLabel("Title:"));
+        panel.add(titleField);
+        panel.add(new JLabel("Genre:"));
+        panel.add(genreField);
+        panel.add(new JLabel("Description:"));
+        panel.add(descriptionField);
+        panel.add(new JLabel("Runtime (mins):"));
+        panel.add(runtimeField);
+        panel.add(new JLabel("Cast:"));
+        panel.add(castField);
+        panel.add(new JLabel("Review:"));
+        panel.add(reviewField);
+        panel.add(new JLabel("Rating (out of 5):"));
+        panel.add(ratingField);
+        panel.add(new JLabel("Showtimes (comma-separated):"));
+        panel.add(showtimesField);
+        panel.add(new JLabel("Theaters (comma-separated):"));
+        panel.add(theatersField);
+        panel.add(addButton);
+
+        return panel;
+    }
+
+    private static void saveMovies() {
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter("movies.txt"))) {
+            for (Movie movie : currentMovies) {
+                writer.write(String.join("::",
+                        movie.getTitle(),
+                        movie.getGenre(),
+                        movie.getDescription(),
+                        String.valueOf(movie.getRuntime()),
+                        String.valueOf(movie.isCanPurchase()),
+                        movie.getCast(),
+                        movie.getReview() == null ? "" : movie.getReview(),
+                        String.valueOf(movie.getRating()),
+                        String.join(",", movie.getShowtimes()),
+                        String.join(",", movie.getTheaters()),
+                        String.valueOf(movie.getTicketPrice()),
+                        String.valueOf(movie.getTicketsSold()))); // Add ticketsSold
+                writer.newLine();
+            }
+            for (Movie movie : upcomingMovies) {
+                writer.write(String.join("::",
+                        movie.getTitle(),
+                        movie.getGenre(),
+                        movie.getDescription(),
+                        String.valueOf(movie.getRuntime()),
+                        String.valueOf(movie.isCanPurchase()),
+                        movie.getCast(),
+                        movie.getReview() == null ? "" : movie.getReview(),
+                        String.valueOf(movie.getRating()),
+                        String.join(",", movie.getShowtimes()),
+                        String.join(",", movie.getTheaters()),
+                        "0.0", // Ticket price for upcoming movies
+                        String.valueOf(movie.getTicketsSold()))); // Add ticketsSold
+                writer.newLine();
+            }
+        } catch (IOException e) {
+            System.err.println("Error saving movies: " + e.getMessage());
+        }
+    }
+
+    private static void loadMovies() {
+        currentMovies.clear();
+        upcomingMovies.clear();
+        try (BufferedReader reader = new BufferedReader(new FileReader("movies.txt"))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                String[] parts = line.split("::");
+                if (parts.length < 11) {
+                    System.err.println("Skipping malformed line: " + line);
+                    continue; // Skip lines that don't have enough fields
+                }
+
+                String title = parts[0];
+                String genre = parts[1];
+                String description = parts[2];
+                int runtime = Integer.parseInt(parts[3]);
+                boolean canPurchase = Boolean.parseBoolean(parts[4]);
+                String cast = parts[5];
+                String review = parts[6].isEmpty() ? null : parts[6];
+                double rating = Double.parseDouble(parts[7]);
+                String[] showtimes = parts[8].split(",");
+                String[] theaters = parts[9].split(",");
+                double ticketPrice = Double.parseDouble(parts[10]);
+                int ticketsSold = parts.length > 11 ? Integer.parseInt(parts[11]) : 0; // Default to 0 if missing
+
+                Movie movie = new Movie(title, genre, description, runtime, canPurchase, cast, review,
+                        rating, showtimes, theaters, ticketPrice);
+                movie.sellTickets(ticketsSold); // Set ticketsSold
+
+                if (canPurchase) {
+                    currentMovies.add(movie);
+                } else {
+                    upcomingMovies.add(movie);
+                }
+            }
+        } catch (IOException e) {
+            System.err.println("Error loading movies: " + e.getMessage());
+        } catch (NumberFormatException e) {
+            System.err.println("Error parsing numeric value: " + e.getMessage());
+        }
+    }
+
+    private static void loadUsers() {
+        users.clear(); // Clear current list to avoid duplicates
+        try (BufferedReader reader = new BufferedReader(new FileReader("users.txt"))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                String[] parts = line.split(",");
+                String username = parts[0];
+                String password = parts[1];
+                boolean isAdmin = Boolean.parseBoolean(parts[2]);
+                users.add(new User(username, password, isAdmin));
+            }
+        } catch (IOException e) {
+            //System.err.println("Error loading users: " + e.getMessage());
+        }
+    }
+    private static void saveUsers() {
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter("users.txt"))) {
+            for (User user : users) {
+                writer.write(user.getUsername() + "," + user.getPassword() + "," + user.isAdmin());
+                writer.newLine();
+            }
+        } catch (IOException e) {
+            System.err.println("Error saving users: " + e.getMessage());
+        }
+    }
+
+    private static final String REVIEWS_FILE = "reviews.txt";
+
+    private static void loadReviews() {
+        try (BufferedReader reader = new BufferedReader(new FileReader(REVIEWS_FILE))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                String[] parts = line.split("::");
+                if (parts.length == 2) {
+                    String movieTitle = parts[0];
+                    String review = parts[1];
+
+                    // Find the movie and add the review
+                    for (Movie movie : currentMovies) {
+                        if (movie.getTitle().equalsIgnoreCase(movieTitle)) {
+                            movie.addReview(review, false); // False to prevent saving during load
+                            break;
+                        }
+                    }
+                    for (Movie movie : upcomingMovies) {
+                        if (movie.getTitle().equalsIgnoreCase(movieTitle)) {
+                            movie.addReview(review, false); // False to prevent saving during load
+                            break;
+                        }
+                    }
+                }
+            }
+        } catch (IOException e) {
+            //vSystem.err.println("Error loading reviews: " + e.getMessage());
+        }
+    }
+
+    public static void saveReviews() {
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(REVIEWS_FILE))) {
+            for (Movie movie : currentMovies) {
+                for (String review : movie.getReviews()) {
+                    writer.write(movie.getTitle() + "::" + review);
+                    writer.newLine();
+                }
+            }
+            for (Movie movie : upcomingMovies) {
+                for (String review : movie.getReviews()) {
+                    writer.write(movie.getTitle() + "::" + review);
+                    writer.newLine();
+                }
+            }
+        } catch (IOException e) {
+            System.err.println("Error saving reviews: " + e.getMessage());
+        }
+    }
+
+    private static void showCurrentMoviesPage() {
+        JFrame frame = new JFrame("Current Movie Catalog");
+        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        frame.setSize(500, 400);
+
+        JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+
+        JLabel label = new JLabel("Current Movie Catalog");
+        label.setFont(new Font("Arial", Font.BOLD, 16));
+        label.setAlignmentX(Component.CENTER_ALIGNMENT);
+        panel.add(label);
+
+        int buttonWidth = 300;
+        int buttonHeight = 40;
+
+        for (Movie movie : currentMovies) {
+            JButton movieButton = new JButton(movie.getTitle() + " (Price: $" + String.format("%.2f", movie.getTicketPrice()) + ")");
+            setUniformButtonSize(movieButton, buttonWidth, buttonHeight);
+            movieButton.setAlignmentX(Component.CENTER_ALIGNMENT);
+            movieButton.addActionListener(e -> {
+                frame.dispose();
+                showMovieDetails(frame, movie);
+            });
+            panel.add(movieButton);
+        }
+
+        JButton backButton = new JButton("Back");
+        backButton.setAlignmentX(Component.CENTER_ALIGNMENT);
+        backButton.addActionListener(e -> {
+            frame.dispose();
+            showHomePage();
+        });
+        panel.add(backButton);
+
+        enableEnterKeyForAllButtons(panel);
+        frame.add(panel);
+        ThemeManager.applyTheme(frame.getContentPane());
+        frame.setVisible(true);
+    }
+
+    private static void showUpcomingMoviesPage() {
+        JFrame frame = new JFrame("Upcoming Movie Catalog");
+        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        frame.setSize(500, 400);
+
+        JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+
+        JLabel label = new JLabel("Upcoming Movie Catalog");
+        label.setFont(new Font("Arial", Font.BOLD, 16));
+        label.setAlignmentX(Component.CENTER_ALIGNMENT);
+        panel.add(label);
+
+        int buttonWidth = 300;
+        int buttonHeight = 40;
+
+        for (Movie movie : upcomingMovies) {
+            JButton movieLabel = new JButton(movie.getTitle() + " - " + movie.getGenre());
+
+            setUniformButtonSize(movieLabel, buttonWidth, buttonHeight);
+            movieLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+            movieLabel.addActionListener(e -> {
+                frame.dispose();
+                showUpcomingMovieDetails(frame, movie);
+            });
+            panel.add(movieLabel);
+        }
+
+        JButton backButton = new JButton("Back");
+
+        backButton.setAlignmentX(Component.CENTER_ALIGNMENT);
+        backButton.addActionListener(e -> {
+            frame.dispose();
+            showHomePage();
+        });
+        panel.add(backButton);
+
+        enableEnterKeyForAllButtons(panel);
+        frame.add(panel);
+        ThemeManager.applyTheme(frame.getContentPane());
+        frame.setVisible(true);
+    }
+
+    private static void showSearchMoviesPage() {
+        JFrame frame = new JFrame("Search a Movie");
+        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        frame.setSize(500, 400);
+
+        JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+
+        JLabel label = new JLabel("Search for a Movie");
+        label.setFont(new Font("Arial", Font.BOLD, 16));
+        label.setAlignmentX(Component.CENTER_ALIGNMENT);
+        panel.add(label);
+
+        JTextField searchField = new JTextField();
+        searchField.setMaximumSize(new Dimension(300, 30));
+        searchField.setAlignmentX(Component.CENTER_ALIGNMENT);
+        panel.add(searchField);
+
+        JButton searchButton = new JButton("Search");
+        searchButton.setAlignmentX(Component.CENTER_ALIGNMENT);
+        searchButton.addActionListener(e -> {
+            String query = searchField.getText().trim().toLowerCase();
+            List<Movie> results = new ArrayList<>();
+            results.addAll(currentMovies.stream().filter(m -> m.getTitle().toLowerCase().contains(query)).toList());
+            results.addAll(upcomingMovies.stream().filter(m -> m.getTitle().toLowerCase().contains(query)).toList());
+
+            if (results.isEmpty()) {
+                JOptionPane.showMessageDialog(frame, "No movies found with the title: " + query);
+            } else {
+                frame.dispose();
+                showSearchResultsPage(results);
+            }
+        });
+        panel.add(searchButton);
+
+        JButton backButton = new JButton("Back");
+
+        backButton.setAlignmentX(Component.CENTER_ALIGNMENT);
+        backButton.addActionListener(e -> {
+            frame.dispose();
+            showHomePage();
+        });
+        panel.add(backButton);
+
+        enableEnterKeyForAllButtons(panel);
+        frame.add(panel);
+        ThemeManager.applyTheme(frame.getContentPane());
+        frame.setVisible(true);
+    }
+
+    private static void showSearchResultsPage(List<Movie> results) {
+        JFrame frame = new JFrame("Search Results");
+        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        frame.setSize(500, 400);
+
+        JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+
+        JLabel label = new JLabel("Search Results");
+        label.setFont(new Font("Arial", Font.BOLD, 16));
+        label.setAlignmentX(Component.CENTER_ALIGNMENT);
+        panel.add(label);
+
+        int buttonWidth = 300;
+        int buttonHeight = 40;
+
+        for (Movie movie : results) {
+            JButton movieButton = new JButton(movie.getTitle());
+
+            setUniformButtonSize(movieButton, buttonWidth, buttonHeight);
+            movieButton.setAlignmentX(Component.CENTER_ALIGNMENT);
+            movieButton.addActionListener(e -> {
+                frame.dispose();
+                if (currentMovies.contains(movie)) {
+                    showMovieDetails(frame, movie);
+                }
+                else if (upcomingMovies.contains(movie)) {
+                    showUpcomingMovieDetails(frame,movie);
+                }
+            });
+            panel.add(movieButton);
+        }
+
+        JButton backButton = new JButton("Back");
+
+        backButton.setAlignmentX(Component.CENTER_ALIGNMENT);
+        backButton.addActionListener(e -> {
+            frame.dispose();
+            showSearchMoviesPage();
+        });
+        panel.add(backButton);
+
+        enableEnterKeyForAllButtons(panel);
+        frame.add(panel);
+        ThemeManager.applyTheme(frame.getContentPane());
+        frame.setVisible(true);
+    }
+
+    private static void setUniformButtonSize(JButton button, int width, int height) {
+        Dimension size = new Dimension(width, height);
+        button.setPreferredSize(size);
+        button.setMaximumSize(size);
+        button.setMinimumSize(size);
+    }
+
+    private static void showUpcomingMovieDetails(JFrame parent, Movie movie) {
+        parent.dispose();
+        JFrame frame = new JFrame("Upcoming Movie Details - " + movie.getTitle());
+        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        frame.setSize(500, 400);
+
+        JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+
+        // Movie Details
+        panel.add(new JLabel("Title: " + movie.getTitle()));
+        panel.add(new JLabel("Genre: " + movie.getGenre()));
+        panel.add(new JLabel("Runtime: " + movie.getRuntime() + " minutes"));
+        panel.add(new JLabel("Synopsis: " + movie.getDescription()));
+        panel.add(new JLabel("Cast: " + movie.getCast()));
+        panel.add(new JLabel("Rating: " + (movie.getRating() != null ? movie.getRating() + " / 5" : "N/A")));
+
+
+        // Back Button
+        JButton backButton = new JButton("Back");
+
+        backButton.addActionListener(e -> {
+            frame.dispose();
+            showUpcomingMoviesPage();
+        });
+        panel.add(backButton);
+
+        enableEnterKeyForAllButtons(panel);
+        frame.add(new JScrollPane(panel));
+        ThemeManager.applyTheme(frame.getContentPane());
+        frame.setVisible(true);
+    }
+
+    private static String generateTicket(String username, Movie movie, String theater, String time, int seats) {
+        long uniqueTicketID = System.currentTimeMillis();
+        String ticketDetails = "=== Electronic Ticket ===\n" +
+                "Ticket ID: " + uniqueTicketID + "\n" +
+                "Movie: " + movie.getTitle() + "\n" +
+                "Theater: " + theater + "\n" +
+                "Showtime: " + time + "\n" +
+                "Seats: " + seats + "\n" +
+                "=========================";
+
+        // Save the ticket to a file (optional)
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter("tickets.txt", true))) {
+            writer.write(ticketDetails);
+            writer.newLine();
+            writer.write("-------------------------");
+            writer.newLine();
+        } catch (IOException e) {
+            System.err.println("Error saving ticket: " + e.getMessage());
+        }
+
+        return ticketDetails;
+    }
+
+    private static void showTicket(String ticketDetails) {
+        JFrame frame = new JFrame("Your Ticket");
+        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        frame.setSize(400, 500);
+
+        JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+
+        JTextArea ticketArea = new JTextArea(ticketDetails);
+        ticketArea.setEditable(false);
+        ticketArea.setLineWrap(true);
+        ticketArea.setWrapStyleWord(true);
+
+
+        JButton backButton = new JButton("Back to Home");
+
+        backButton.addActionListener(e -> {
+            frame.dispose();
+            showHomePage();
+        });
+
+        panel.add(new JLabel("Your Electronic Ticket:"));
+        panel.add(new JScrollPane(ticketArea));
+        panel.add(backButton);
+
+        enableEnterKeyForAllButtons(panel);
+        frame.add(panel);
+        ThemeManager.applyTheme(frame.getContentPane());
+        frame.setVisible(true);
+    }
+}
+class Ticket {
+    private String username;
+    private String movieTitle;
+    private String theater;
+    private String showtime;
+    private int seats;
+    private  String ticketID;
+
+    public Ticket(String username, String movieTitle, String theater, String showtime, int seats) {
+        this.username = username;
+        this.movieTitle = movieTitle;
+        this.theater = theater;
+        this.showtime = showtime;
+        this.seats = seats;
+        this.ticketID = UUID.randomUUID().toString();
+    }
+
+    public String getUsername() {
+        return username;
+    }
+
+    public String getMovieTitle() {
+        return movieTitle;
+    }
+
+    public String getTheater() {
+        return theater;
+    }
+
+    public String getShowtime() {
+        return showtime;
+    }
+
+    public int getSeats() {
+        return seats;
+    }
+    public String getTicketID() {
+        return ticketID;
+    }
+
+    @Override
+    public String toString() {
+        return String.format("Movie: %s, Theater: %s, Showtime: %s, Seats: %d\n ID: %s", movieTitle, theater, showtime, seats, ticketID);
+    }
+}
+
+class Movie {
+    private String title;
+    private String genre;
+    private String description;
+    private int runtime;
+    private boolean canPurchase;
+    private String cast;
+    private String review;
+    private Double rating;
+    private String[] showtimes;
+    private String[] theaters;
+    private List<String> reviews;
+    private int ticketsSold; // New field to track tickets sold
+    private double ticketPrice;
+    public Movie(String title, String genre, String description, int runtime, boolean canPurchase,
+                 String cast, String review, Double rating, String[] showtimes, String[] theaters, double ticketPrice) {
+        this.title = title;
+        this.genre = genre;
+        this.description = description;
+        this.runtime = runtime;
+        this.canPurchase = canPurchase;
+        this.cast = cast;
+        this.review = review;
+        this.rating = rating;
+        this.showtimes = showtimes;
+        this.theaters = theaters;
+        this.reviews = new ArrayList<>();
+        this.ticketsSold = 0; // Initialize tickets sold to 0
+        this.ticketPrice = ticketPrice;
+    }
+    public double getTicketPrice() {
+        return ticketPrice;
+    }
+    public void setTicketPrice(double ticketPrice) {
+        this.ticketPrice = ticketPrice;
+    }
+
+    public String getTitle() {
+        return title;
+    }
+    public void setTitle(String title) {
+        this.title = title;
+    }
+
+    public String getGenre() {
+        return genre;
+    }
+    public void setGenre(String genre) {
+        this.genre = genre;
+    }
+
+    public String getDescription() {
+        return description;
+    }
+    public void setDescription(String description) {
+        this.description = description;
+    }
+
+    public int getRuntime() {
+        return runtime;
+    }
+    public  void setRuntime(int runtime) {
+        this.runtime = runtime;
+    }
+    public boolean isCanPurchase() {
+        return canPurchase;
+    }
+
+    public String getCast() {
+        return cast;
+    }
+    public void setCast(String cast) {
+        this.cast = cast;
+    }
+
+    public String getReview() {
+        return review;
+    }
+    public void setReview(String review) {
+        this.review = review;
+    }
+
+    public Double getRating() {
+        return rating;
+    }
+    public void setRating(double rating) {
+        this.rating = rating;
+    }
+
+    public String[] getShowtimes() {
+        return showtimes;
+    }
+    public void setShowtimes(String[] showtimes) {
+        this.showtimes = showtimes;
+    }
+
+    public String[] getTheaters() {
+        return theaters;
+    }
+    public void setTheaters(String[] theaters) {
+        this.theaters = theaters;
+    }
+
+    public List<String> getReviews() {
+        return reviews;
+    }
+    public void addReview(String review) {
+        addReview(review, true);
+    }
+
+    public void addReview(String review, boolean saveToFile) {
+        reviews.add(review);
+        if (saveToFile) {
+            MovieBookingSystem.saveReviews(); // Save reviews to the file if required
+        }
+    }
+
+
+    public int getTicketsSold() {
+        return ticketsSold;
+    }
+
+    public void sellTickets(int count) {
+        if (count > 0) {
+            this.ticketsSold += count;
+        }
+    }
+
+}
+class ThemeManager {
+    private static final Color BACKGROUND_COLOR = Color.BLACK;
+    private static final Color FOREGROUND_COLOR = Color.WHITE;
+
+    public static Color getBackgroundColor() {
+        return BACKGROUND_COLOR;
+    }
+
+    public static Color getForegroundColor() {
+        return FOREGROUND_COLOR;
+    }
+
+    public static void applyTheme(Container container) {
+        for (Component component : container.getComponents()) {
+            if (component instanceof JComponent) {
+                component.setBackground(getBackgroundColor());
+                component.setForeground(getForegroundColor());
+            }
+            if (component instanceof JTextField) {
+                ((JTextField) component).setCaretColor(getForegroundColor());
+            }
+            if (component instanceof JPasswordField) {
+                ((JPasswordField) component).setCaretColor(getForegroundColor());
+            }
+            if (component instanceof Container) {
+                applyTheme((Container) component); // Recursively apply theme to nested components
+            }
+        }
+    }
+}
+
+
+
+class EncryptionUtils {
+
+    private static final String ALGORITHM = "AES";
+    private static final String SECRET_KEY = "1234567890123456"; // 16-byte key (use a secure method to generate & store this)
+
+    // Encrypt a string using AES
+    public static String encrypt(String data) {
+        try {
+            SecretKeySpec keySpec = new SecretKeySpec(SECRET_KEY.getBytes(), ALGORITHM);
+            Cipher cipher = Cipher.getInstance(ALGORITHM);
+            cipher.init(Cipher.ENCRYPT_MODE, keySpec);
+            byte[] encryptedBytes = cipher.doFinal(data.getBytes());
+            return Base64.getEncoder().encodeToString(encryptedBytes);
+        } catch (Exception e) {
+            throw new RuntimeException("Error encrypting data", e);
+        }
+    }
+
+    // Decrypt a string using AES
+    public static String decrypt(String encryptedData) {
+        try {
+            SecretKeySpec keySpec = new SecretKeySpec(SECRET_KEY.getBytes(), ALGORITHM);
+            Cipher cipher = Cipher.getInstance(ALGORITHM);
+            cipher.init(Cipher.DECRYPT_MODE, keySpec);
+            byte[] decryptedBytes = cipher.doFinal(Base64.getDecoder().decode(encryptedData));
+            return new String(decryptedBytes);
+        } catch (Exception e) {
+            throw new RuntimeException("Error decrypting data", e);
+        }
+    }
+    public static String hashPassword(String password) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] hash = md.digest(password.getBytes());
+            StringBuilder hexString = new StringBuilder();
+            for (byte b : hash) {
+                String hex = Integer.toHexString(0xff & b);
+                if (hex.length() == 1) hexString.append('0');
+                hexString.append(hex);
+            }
+            return hexString.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException("Error hashing password", e);
+        }
+    }
+}
